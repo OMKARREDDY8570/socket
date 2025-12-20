@@ -1,38 +1,70 @@
 import socket
-import subprocess # Import the subprocess module
+import threading
 import os
 
-port = int(os.environ.get("PORT", 5050)) 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind(("0.0.0.0", port)) 
-server.listen(1)
+# --- Configuration ---
+# Railway assigns a port dynamically; your code must read it.
+# Internal Port on Railway should be set to 5000 via a PORT environment variable
+PORT = int(os.environ.get("PORT", 5000))
+SERVER_HOST = "0.0.0.0"
 
-print(f"Server listening on port {port}")
-conn, addr = server.accept()
-print(f"Connection established with {addr}")
+# Sockets to store the active connections
+client_conn = None
+listener_conn = None
+# ---------------------
 
-while True:
-    # 1. Receive command from client
-    command = conn.recv(1024).decode('utf-8')
-    if command.lower() == 'quit' or not command:
-        break
+def handle_connection(conn, addr, name):
+    global client_conn, listener_conn
+    print(f"Connection established with {name} from {addr}")
     
-    # 2. Execute the command using subprocess
-    try:
-        # Use subprocess.run to execute the shell command
-        result = subprocess.run(
-            command, 
-            shell=True,          # Allows execution of full shell commands
-            capture_output=True, # Captures stdout and stderr
-            text=True            # Decodes output as string (not bytes)
-        )
-        output = result.stdout + result.stderr
+    while True:
+        try:
+            data = conn.recv(4096)
+            if not data:
+                print(f"{name} disconnected.")
+                break
 
-    except Exception as e:
-        output = f"Error executing command: {e}"
+            # Relay the message to the OTHER party
+            if name == "Client" and listener_conn:
+                print(f"Relaying from Client to Listener: {data.decode()}")
+                listener_conn.sendall(data)
+            elif name == "Listener" and client_conn:
+                print(f"Relaying from Listener to Client: {data.decode()}")
+                client_conn.sendall(data)
 
-    # 3. Send the output back to the client
-    conn.sendall(output.encode('utf-8'))
+        except Exception as e:
+            print(f"Error handling {name} connection: {e}")
+            break
 
-conn.close()
-server.close()
+    # Clean up the connection when the loop breaks
+    if name == "Client":
+        client_conn = None
+    elif name == "Listener":
+        listener_conn = None
+    conn.close()
+
+
+def start_server():
+    global client_conn, listener_conn
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((SERVER_HOST, PORT))
+    server_socket.listen(5)
+    print(f"Middleman server listening on {SERVER_HOST}:{PORT}")
+
+    while True:
+        conn, addr = server_socket.accept()
+        
+        if client_conn is None:
+            client_conn = conn
+            thread = threading.Thread(target=handle_connection, args=(conn, addr, "Client"))
+            thread.start()
+        elif listener_conn is None:
+            listener_conn = conn
+            thread = threading.Thread(target=handle_connection, args=(conn, addr, "Listener"))
+            thread.start()
+        else:
+            conn.sendall("Server full, try later.".encode('utf-8'))
+            conn.close()
+
+if __name__ == "__main__":
+    start_server()
