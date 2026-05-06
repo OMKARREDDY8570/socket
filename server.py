@@ -8,7 +8,7 @@ import os
 PORT = int(os.environ.get("PORT", 5000))
 SERVER_HOST = "0.0.0.0"
 
-# Sockets to store the active connections
+# Sockets to store the active connections.
 client_conn = None
 listener_conn = None
 # ---------------------
